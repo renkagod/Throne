@@ -18,6 +18,7 @@ public:
 
 signals:
     void closeRequested(const QString &id);
+    void closeMultipleRequested(const QStringList &ids);
 
 protected:
     bool editorEvent(QEvent *event, QAbstractItemModel *model,
