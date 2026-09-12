@@ -277,8 +277,14 @@ private:
     QMutex mu_download_dashboard;
     class ConnectionsTableModel *connectionsModel = nullptr;
     class ConnectionsFilterProxyModel *connectionsFilterModel = nullptr;
+    class ConnectionsTreeModel *connectionsTreeModel = nullptr;
+    class ConnectionsTreeFilterProxyModel *connectionsTreeFilterModel = nullptr;
     class ConnectionCloseDelegate *connectionCloseDelegate = nullptr;
     class ConnectionsFilterHeader *connectionFilterHeader = nullptr;
+    class ConnectionsTreeFilterHeader *connectionsTreeFilterHeader = nullptr;
+    class QTreeView *connectionsTree = nullptr;
+    QToolButton *connectionViewModeButton = nullptr;
+    QSet<QString> m_collapsedProcesses;
     QTimer *connectionFilterDebounce = nullptr;
     QToolButton *connectionCloseAllButton = nullptr;
     QIcon connectionCloseIcon;
@@ -493,10 +499,15 @@ private:
     void SeedDashboard();
 
     void setupConnectionList();
+    void setupConnectionTree();
+    void setConnectionViewMode(bool treeMode);
+    bool isConnectionTreeView() const;
+    void updateConnectionViewModeButton(bool treeMode);
 
     void setupConnectionSortMenu();
 
     void onConnectionContextMenu(const QPoint &pos);
+    void onTreeConnectionContextMenu(const QPoint &pos);
 
     QString routeRuleAppendBlocker() const;
 

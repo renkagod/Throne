@@ -215,6 +215,11 @@ set(PROJECT_SOURCES
         src/ui/utils/ConnectionsTableModel.cpp
         include/ui/utils/ConnectionsFilterProxyModel.h
         src/ui/utils/ConnectionsFilterProxyModel.cpp
+        include/ui/utils/ConnectionsTreeFilterHeader.h
+        include/ui/utils/ConnectionsTreeModel.h
+        src/ui/utils/ConnectionsTreeModel.cpp
+        include/ui/utils/ConnectionsTreeFilterProxyModel.h
+        src/ui/utils/ConnectionsTreeFilterProxyModel.cpp
         include/ui/utils/ConnectionCloseDelegate.h
         src/ui/utils/ConnectionCloseDelegate.cpp
         include/ui/utils/ScreenQrScanner.h

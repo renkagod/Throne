@@ -89,6 +89,7 @@ namespace Configs {
             {"dns_use_hosts", &dns_use_hosts},
             {"dns_predefined_enable", &dns_predefined_enable},
             {"connection_sort_asc", &connection_sort_asc},
+            {"connection_tree_view", &connection_tree_view},
         };
 
         intMap = {

@@ -50,7 +50,19 @@ bool ConnectionCloseDelegate::editorEvent(QEvent *event, QAbstractItemModel *mod
     // Swallowed so the cell never starts a selection drag; the click itself lands on release.
     if (type != QEvent::MouseButtonRelease) return true;
 
-    const auto id = index.data(ConnectionsTableModel::ConnIdRole).toString();
-    if (!id.isEmpty()) emit closeRequested(id);
+    const auto idVariant = index.data(ConnectionsTableModel::ConnIdRole);
+    if (idVariant.userType() == QMetaType::QStringList) {
+        const auto list = idVariant.toStringList();
+        if (!list.isEmpty()) emit closeMultipleRequested(list);
+    } else {
+        const auto idStr = idVariant.toString();
+        if (!idStr.isEmpty()) {
+            if (idStr.contains(QLatin1Char(','))) {
+                emit closeMultipleRequested(idStr.split(QLatin1Char(','), Qt::SkipEmptyParts));
+            } else {
+                emit closeRequested(idStr);
+            }
+        }
+    }
     return true;
 }
