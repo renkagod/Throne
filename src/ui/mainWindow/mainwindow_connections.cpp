@@ -180,7 +180,7 @@ void MainWindow::setupConnectionTree()
     connectionsTree->setSelectionMode(QAbstractItemView::SingleSelection);
     connectionsTree->setAlternatingRowColors(true);
     connectionsTree->setWordWrap(false);
-    connectionsTree->setAnimated(true);
+    connectionsTree->setAnimated(false);
 
     connectionsTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(connectionsTree, &QWidget::customContextMenuRequested, this, &MainWindow::onTreeConnectionContextMenu);
@@ -188,7 +188,13 @@ void MainWindow::setupConnectionTree()
     connect(connectionsTree, &QAbstractItemView::clicked, this, [this](const QModelIndex& index)
     {
         if (!index.isValid() || index.column() == ConnectionsTreeModel::ColClose) return;
-        const auto text = index.data(Qt::DisplayRole).toString();
+
+        QString text;
+        if (index.data(ConnectionsTreeModel::IsProcessRole).toBool() && index.column() == ConnectionsTreeModel::ColTarget) {
+            text = index.data(ConnectionsTreeModel::ProcessNameRole).toString();
+        } else {
+            text = index.data(Qt::DisplayRole).toString();
+        }
         if (text.isEmpty()) return;
 
         QApplication::clipboard()->setText(text);
@@ -248,6 +254,17 @@ void MainWindow::setConnectionViewMode(bool treeMode)
     if (connectionsTree) connectionsTree->setVisible(treeMode);
 
     updateConnectionViewModeButton(treeMode);
+
+    if (connectionFilterButton != nullptr) {
+        const bool filterVis = connectionFilterButton->isChecked();
+        if (connectionFilterHeader != nullptr) connectionFilterHeader->setFiltersVisible(filterVis);
+        if (connectionsTreeFilterHeader != nullptr) {
+            connectionsTreeFilterHeader->setFiltersVisible(filterVis);
+            if (treeMode) connectionsTreeFilterHeader->adjustPositions();
+        }
+    }
+
+    applyConnectionFilters();
 }
 
 void MainWindow::updateConnectionViewModeButton(bool treeMode)
@@ -287,17 +304,19 @@ void MainWindow::applyConnectionSort(Stats::ConnectionSort sort)
 
 void MainWindow::setupConnectionFilter()
 {
-    auto* btnFilter = new QToolButton(this);
-    btnFilter->setIcon(QIcon(":/icon/filter.png"));
-    btnFilter->setToolTip(tr("Enable Filter"));
-    btnFilter->setCheckable(true);
-    connect(btnFilter, &QToolButton::toggled, this, [this](bool visible) {
+    connectionFilterButton = new QToolButton(this);
+    connectionFilterButton->setIcon(QIcon(":/icon/filter.png"));
+    connectionFilterButton->setToolTip(tr("Enable Filter"));
+    connectionFilterButton->setCheckable(true);
+    connect(connectionFilterButton, &QToolButton::toggled, this, [this](bool visible) {
         if (connectionFilterHeader) connectionFilterHeader->setFiltersVisible(visible);
         if (connectionsTreeFilterHeader) connectionsTreeFilterHeader->setFiltersVisible(visible);
     });
-    connect(connectionFilterHeader, &ConnectionsFilterHeader::closeRequested, btnFilter, [btnFilter] { btnFilter->setChecked(false); });
+    connect(connectionFilterHeader, &ConnectionsFilterHeader::closeRequested, connectionFilterButton,
+            [this] { connectionFilterButton->setChecked(false); });
     if (connectionsTreeFilterHeader) {
-        connect(connectionsTreeFilterHeader, &ConnectionsTreeFilterHeader::closeRequested, btnFilter, [btnFilter] { btnFilter->setChecked(false); });
+        connect(connectionsTreeFilterHeader, &ConnectionsTreeFilterHeader::closeRequested, connectionFilterButton,
+                [this] { connectionFilterButton->setChecked(false); });
     }
 
     connectionCloseAllButton = new QToolButton(this);
@@ -335,7 +354,7 @@ void MainWindow::setupConnectionFilter()
     cornerLayout->setContentsMargins(0, 0, 0, 0);
     cornerLayout->setSpacing(2);
     cornerLayout->addWidget(connectionViewModeButton);
-    cornerLayout->addWidget(btnFilter);
+    cornerLayout->addWidget(connectionFilterButton);
     cornerLayout->addWidget(connectionCloseAllButton);
     ui->stats_widget->setCornerWidget(corner, Qt::TopRightCorner);
 
@@ -358,11 +377,11 @@ void MainWindow::applyConnectionFilters()
     if (isConnectionTreeView() && connectionsTreeFilterHeader != nullptr) {
         const auto filters = connectionsTreeFilterHeader->filters();
         if (connectionsTreeFilterModel != nullptr) {
-            connectionsTreeFilterModel->setFilters(filters.source, filters.dest, filters.process,
-                                                   filters.protocol, filters.outbound);
+            connectionsTreeFilterModel->setFilters(filters.source, "", "",
+                                                   filters.protocol, filters.outbound, filters.target);
         }
         if (connectionsFilterModel != nullptr) {
-            connectionsFilterModel->setFilters(filters.source, filters.dest, filters.process,
+            connectionsFilterModel->setFilters(filters.source, filters.target, filters.target,
                                                filters.protocol, filters.outbound);
         }
     } else if (connectionFilterHeader != nullptr) {
@@ -373,7 +392,7 @@ void MainWindow::applyConnectionFilters()
         }
         if (connectionsTreeFilterModel != nullptr) {
             connectionsTreeFilterModel->setFilters(filters.source, filters.dest, filters.process,
-                                                   filters.protocol, filters.outbound);
+                                                   filters.protocol, filters.outbound, "");
         }
     }
 }
@@ -525,8 +544,23 @@ void MainWindow::UpdateConnectionList(const QList<Stats::ConnectionMetadata>& co
 
     if (connectionsTreeModel != nullptr && connectionsTree != nullptr) {
         const int scrollPos = connectionsTree->verticalScrollBar()->value();
+
+        QString selectedConnId;
+        QString selectedProcess;
+        bool selectedWasProcess = false;
+        const QModelIndex currentProxyIdx = connectionsTree->currentIndex();
+        if (currentProxyIdx.isValid()) {
+            selectedWasProcess = currentProxyIdx.data(ConnectionsTreeModel::IsProcessRole).toBool();
+            if (selectedWasProcess) {
+                selectedProcess = currentProxyIdx.data(ConnectionsTreeModel::ProcessNameRole).toString();
+            } else {
+                selectedConnId = currentProxyIdx.data(ConnectionsTreeModel::ConnIdRole).toString();
+            }
+        }
+
         connectionsTreeModel->setConnections(connections);
 
+        const bool oldBlocked = connectionsTree->blockSignals(true);
         const int groupCount = connectionsTreeFilterModel ? connectionsTreeFilterModel->rowCount()
                                                           : connectionsTreeModel->rowCount();
         for (int i = 0; i < groupCount; ++i) {
@@ -535,6 +569,35 @@ void MainWindow::UpdateConnectionList(const QList<Stats::ConnectionMetadata>& co
             const QString proc = idx.data(ConnectionsTreeModel::ProcessNameRole).toString();
             const bool shouldExpand = !m_collapsedProcesses.contains(proc);
             connectionsTree->setExpanded(idx, shouldExpand);
+        }
+        connectionsTree->blockSignals(oldBlocked);
+
+        if (selectedWasProcess && !selectedProcess.isEmpty()) {
+            for (int i = 0; i < groupCount; ++i) {
+                const QModelIndex idx = connectionsTreeFilterModel ? connectionsTreeFilterModel->index(i, 0)
+                                                                   : connectionsTreeModel->index(i, 0);
+                if (idx.data(ConnectionsTreeModel::ProcessNameRole).toString() == selectedProcess) {
+                    connectionsTree->setCurrentIndex(idx);
+                    break;
+                }
+            }
+        } else if (!selectedConnId.isEmpty()) {
+            bool found = false;
+            for (int i = 0; i < groupCount && !found; ++i) {
+                const QModelIndex groupIdx = connectionsTreeFilterModel ? connectionsTreeFilterModel->index(i, 0)
+                                                                        : connectionsTreeModel->index(i, 0);
+                const int childCount = connectionsTreeFilterModel ? connectionsTreeFilterModel->rowCount(groupIdx)
+                                                                  : connectionsTreeModel->rowCount(groupIdx);
+                for (int c = 0; c < childCount; ++c) {
+                    const QModelIndex childIdx = connectionsTreeFilterModel ? connectionsTreeFilterModel->index(c, 0, groupIdx)
+                                                                            : connectionsTreeModel->index(c, 0, groupIdx);
+                    if (childIdx.data(ConnectionsTreeModel::ConnIdRole).toString() == selectedConnId) {
+                        connectionsTree->setCurrentIndex(childIdx);
+                        found = true;
+                        break;
+                    }
+                }
+            }
         }
 
         connectionsTree->verticalScrollBar()->setValue(scrollPos);
@@ -724,6 +787,14 @@ void MainWindow::onTreeConnectionContextMenu(const QPoint& pos)
             addRouteSubmenu(tr("Append process \"%1\" to").arg(process), "processName:" + process);
         }
 
+        if (!process.isEmpty()) {
+            auto* copyProc = menu.addAction(tr("Copy Process Name"));
+            connect(copyProc, &QAction::triggered, this, [this, process, showTip] {
+                QApplication::clipboard()->setText(process);
+                showTip(tr("Copied: %1").arg(process));
+            });
+        }
+
         const auto ids = connectionsTreeModel->connectionIdsAt(sourceIndex);
         if (!ids.isEmpty()) {
             menu.addSeparator();
@@ -743,6 +814,22 @@ void MainWindow::onTreeConnectionContextMenu(const QPoint& pos)
 
             if (!host.isEmpty()) addRouteSubmenu(tr("Append \"%1\" to").arg(host), addressRule);
             if (!process.isEmpty()) addRouteSubmenu(tr("Append process \"%1\" to").arg(process), processRule);
+
+            menu.addSeparator();
+            if (!host.isEmpty()) {
+                auto* copyHost = menu.addAction(tr("Copy Destination (%1)").arg(host));
+                connect(copyHost, &QAction::triggered, this, [this, host, showTip] {
+                    QApplication::clipboard()->setText(host);
+                    showTip(tr("Copied: %1").arg(host));
+                });
+            }
+            if (!process.isEmpty()) {
+                auto* copyProc = menu.addAction(tr("Copy Process Name (%1)").arg(process));
+                connect(copyProc, &QAction::triggered, this, [this, process, showTip] {
+                    QApplication::clipboard()->setText(process);
+                    showTip(tr("Copied: %1").arg(process));
+                });
+            }
 
             menu.addSeparator();
             auto* closeAct = menu.addAction(tr("Close connection"));

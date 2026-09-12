@@ -14,8 +14,7 @@ class ConnectionsTreeFilterHeader : public QHeaderView {
 public:
     struct Filters {
         QString source;
-        QString dest;
-        QString process;
+        QString target;
         QString protocol;
         QString outbound;
     };
@@ -41,11 +40,15 @@ public:
         if (QLineEdit *edit = editForColumn(column)) edit->clear();
     }
 
+    void setFilterText(int column, const QString &text) {
+        if (QLineEdit *edit = editForColumn(column)) {
+            if (edit->text() != text) edit->setText(text);
+        }
+    }
+
     Filters filters() const {
-        const QString target = textFor(ConnectionsTreeModel::ColTarget);
         return {textFor(ConnectionsTreeModel::ColSource),
-                target,
-                target,
+                textFor(ConnectionsTreeModel::ColTarget),
                 textFor(ConnectionsTreeModel::ColProtocol),
                 textFor(ConnectionsTreeModel::ColOutbound)};
     }
