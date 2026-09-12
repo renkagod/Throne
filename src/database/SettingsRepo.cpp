@@ -89,7 +89,6 @@ namespace Configs {
             {"dns_use_hosts", &dns_use_hosts},
             {"dns_predefined_enable", &dns_predefined_enable},
             {"connection_sort_asc", &connection_sort_asc},
-            {"connection_tree_view", &connection_tree_view},
         };
 
         intMap = {
@@ -294,7 +293,7 @@ namespace Configs {
             }
         }
         // Nothing writes these back, so drop them or they keep overriding the migrated flags on every load.
-        db.exec("DELETE FROM settings WHERE key IN ('direct_dns_strategy', 'remote_dns_strategy')");
+        db.exec("DELETE FROM settings WHERE key IN ('direct_dns_strategy', 'remote_dns_strategy', 'connection_tree_view')");
     }
 
     void SettingsRepo::saveAllSettings() const {
