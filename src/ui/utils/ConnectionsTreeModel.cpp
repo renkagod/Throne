@@ -1,6 +1,7 @@
 #include "include/ui/utils/ConnectionsTreeModel.h"
 #include "include/global/Utils.hpp"
 
+#include <algorithm>
 #include <QApplication>
 #include <QHash>
 
@@ -9,9 +10,10 @@ ConnectionsTreeModel::ConnectionsTreeModel(QObject *parent)
 
 QModelIndex ConnectionsTreeModel::index(int row, int column, const QModelIndex &parent) const {
     if (column < 0 || column >= ColumnCount) return {};
+    if (parent.isValid() && parent.column() != 0) return {};
 
     if (!parent.isValid()) {
-        if (row < 0 || row >= m_groups.size()) return {};
+        if (row < 0 || row >= static_cast<int>(m_groups.size())) return {};
         return createIndex(row, column, m_groups[row].get());
     }
 
@@ -19,7 +21,7 @@ QModelIndex ConnectionsTreeModel::index(int row, int column, const QModelIndex &
     if (!item || !item->isProcess()) return {};
 
     auto *group = static_cast<ConnectionsTree::ProcessGroupItem *>(item);
-    if (row < 0 || row >= group->children.size()) return {};
+    if (row < 0 || row >= static_cast<int>(group->children.size())) return {};
 
     return createIndex(row, column, group->children[row].get());
 }
@@ -37,6 +39,8 @@ QModelIndex ConnectionsTreeModel::parent(const QModelIndex &child) const {
 }
 
 int ConnectionsTreeModel::rowCount(const QModelIndex &parent) const {
+    if (parent.isValid() && parent.column() != 0) return 0;
+
     if (!parent.isValid()) {
         return static_cast<int>(m_groups.size());
     }
@@ -69,8 +73,7 @@ QVariant ConnectionsTreeModel::data(const QModelIndex &index, int role) const {
 
         if (role == IsProcessRole) return true;
         if (role == ProcessNameRole) return group->processName;
-        if (role == ConnIdsRole) return group->connectionIds();
-        if (role == ConnIdRole) return group->connectionIds().join(QLatin1Char(','));
+        if (role == ConnIdsRole || role == ConnIdRole) return group->connectionIds();
 
         if (role == Qt::DisplayRole) {
             switch (index.column()) {
@@ -215,6 +218,59 @@ void ConnectionsTreeModel::setConnections(const QList<Stats::ConnectionMetadata>
         group->totalDownloadSpeed += c.downloadSpeed;
 
         group->children.push_back(std::move(leaf));
+    }
+
+    if (Stats::connection_lister != nullptr) {
+        const auto sortMode = Stats::connection_lister->getSort();
+        const bool asc = Stats::connection_lister->isSortAscending();
+
+        auto compareGroups = [sortMode, asc](const std::unique_ptr<ConnectionsTree::ProcessGroupItem> &a,
+                                             const std::unique_ptr<ConnectionsTree::ProcessGroupItem> &b) -> bool {
+            switch (sortMode) {
+            case Stats::ByTraffic: {
+                const auto ta = a->totalUpload + a->totalDownload;
+                const auto tb = b->totalUpload + b->totalDownload;
+                if (ta == tb) return a->processName < b->processName;
+                return asc ? (ta < tb) : (ta > tb);
+            }
+            case Stats::ByDownload: {
+                if (a->totalDownload == b->totalDownload) return a->processName < b->processName;
+                return asc ? (a->totalDownload < b->totalDownload) : (a->totalDownload > b->totalDownload);
+            }
+            case Stats::ByUpload: {
+                if (a->totalUpload == b->totalUpload) return a->processName < b->processName;
+                return asc ? (a->totalUpload < b->totalUpload) : (a->totalUpload > b->totalUpload);
+            }
+            case Stats::BySpeed: {
+                const auto sa = a->totalUploadSpeed + a->totalDownloadSpeed;
+                const auto sb = b->totalUploadSpeed + b->totalDownloadSpeed;
+                if (sa == sb) return a->processName < b->processName;
+                return asc ? (sa < sb) : (sa > sb);
+            }
+            case Stats::ByDownloadSpeed: {
+                if (a->totalDownloadSpeed == b->totalDownloadSpeed) return a->processName < b->processName;
+                return asc ? (a->totalDownloadSpeed < b->totalDownloadSpeed) : (a->totalDownloadSpeed > b->totalDownloadSpeed);
+            }
+            case Stats::ByUploadSpeed: {
+                if (a->totalUploadSpeed == b->totalUploadSpeed) return a->processName < b->processName;
+                return asc ? (a->totalUploadSpeed < b->totalUploadSpeed) : (a->totalUploadSpeed > b->totalUploadSpeed);
+            }
+            case Stats::ByProcess: {
+                if (a->processName == b->processName) return false;
+                return asc ? (a->processName > b->processName) : (a->processName < b->processName);
+            }
+            default:
+                return false;
+            }
+        };
+
+        if (sortMode != Stats::Default) {
+            std::stable_sort(m_groups.begin(), m_groups.end(), compareGroups);
+        }
+    }
+
+    for (size_t i = 0; i < m_groups.size(); ++i) {
+        m_groups[i]->row = static_cast<int>(i);
     }
 
     endResetModel();

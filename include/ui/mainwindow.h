@@ -286,6 +286,7 @@ private:
     QToolButton *connectionViewModeButton = nullptr;
     QSet<QString> m_collapsedProcesses;
     QTimer *connectionFilterDebounce = nullptr;
+    QToolButton *connectionFilterButton = nullptr;
     QToolButton *connectionCloseAllButton = nullptr;
     QIcon connectionCloseIcon;
     int toolTipID;
