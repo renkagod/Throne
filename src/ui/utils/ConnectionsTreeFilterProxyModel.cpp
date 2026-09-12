@@ -11,21 +11,18 @@ ConnectionsTreeModel *ConnectionsTreeFilterProxyModel::treeModel() const {
 }
 
 bool ConnectionsTreeFilterProxyModel::hasActiveFilter() const {
-    return !m_source.isEmpty() || !m_dest.isEmpty() || !m_process.isEmpty()
-           || !m_protocol.isEmpty() || !m_outbound.isEmpty() || !m_target.isEmpty();
+    return !m_source.isEmpty() || !m_target.isEmpty()
+           || !m_protocol.isEmpty() || !m_outbound.isEmpty();
 }
 
-void ConnectionsTreeFilterProxyModel::setFilters(const QString &source, const QString &dest,
-                                                 const QString &process, const QString &protocol,
-                                                 const QString &outbound, const QString &target) {
-    if (m_source == source && m_dest == dest && m_process == process
-        && m_protocol == protocol && m_outbound == outbound && m_target == target) return;
+void ConnectionsTreeFilterProxyModel::setFilters(const QString &source, const QString &target,
+                                                 const QString &protocol, const QString &outbound) {
+    if (m_source == source && m_target == target
+        && m_protocol == protocol && m_outbound == outbound) return;
     m_source = source;
-    m_dest = dest;
-    m_process = process;
+    m_target = target;
     m_protocol = protocol;
     m_outbound = outbound;
-    m_target = target;
     invalidateRowsFilter();
 }
 
@@ -42,20 +39,6 @@ bool ConnectionsTreeFilterProxyModel::leafMatches(const ConnectionsTree::Process
 
     if (!m_outbound.isEmpty() && !meta.outbound.contains(m_outbound, Qt::CaseInsensitive))
         return false;
-
-    if (!m_process.isEmpty()) {
-        const QString &procName = group ? group->processName : meta.process;
-        const bool matches = procName.contains(m_process, Qt::CaseInsensitive)
-                          || meta.process.contains(m_process, Qt::CaseInsensitive);
-        if (!matches) return false;
-    }
-
-    if (!m_dest.isEmpty()) {
-        const bool matches = child->destText.contains(m_dest, Qt::CaseInsensitive)
-                          || meta.dest.contains(m_dest, Qt::CaseInsensitive)
-                          || meta.domain.contains(m_dest, Qt::CaseInsensitive);
-        if (!matches) return false;
-    }
 
     if (!m_target.isEmpty()) {
         const QString &procName = group ? group->processName : meta.process;

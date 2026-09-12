@@ -67,7 +67,6 @@ public:
         ColOutbound,      // Outbound tag
         ColTraffic,       // Total traffic
         ColSpeed,         // Total speed
-        ColClose,         // Close button
         ColumnCount
     };
 

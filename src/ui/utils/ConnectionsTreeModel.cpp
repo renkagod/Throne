@@ -58,7 +58,6 @@ int ConnectionsTreeModel::columnCount(const QModelIndex &) const {
 
 Qt::ItemFlags ConnectionsTreeModel::flags(const QModelIndex &index) const {
     if (!index.isValid()) return Qt::NoItemFlags;
-    if (index.column() == ColClose) return Qt::ItemIsEnabled;
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }
 
@@ -95,9 +94,6 @@ QVariant ConnectionsTreeModel::data(const QModelIndex &index, int role) const {
         }
 
         if (role == Qt::ToolTipRole) {
-            if (index.column() == ColClose) {
-                return tr("Close all connections for %1").arg(group->processName);
-            }
             if (index.column() == ColTarget) {
                 return tr("Process: %1\nActive connections: %2\nTotal traffic: %3↑ %4↓\nTotal speed: %5/s↑ %6/s↓")
                     .arg(group->processName)
@@ -134,9 +130,6 @@ QVariant ConnectionsTreeModel::data(const QModelIndex &index, int role) const {
     }
 
     if (role == Qt::ToolTipRole) {
-        if (index.column() == ColClose) {
-            return tr("Close this connection");
-        }
         if (index.column() == ColTarget) {
             return tr("Destination: %1\nProcess: %2\nProtocol: %3\nOutbound: %4")
                 .arg(leaf->destText, c.process.isEmpty() ? tr("System") : c.process, leaf->protocolText, c.outbound);
