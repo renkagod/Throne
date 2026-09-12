@@ -75,25 +75,13 @@ void MainWindow::setupConnectionList()
     {
         if (!index.isValid()) return;
 
-        QString text;
-        if (index.data(ConnectionsTreeModel::IsProcessRole).toBool() && index.column() == ConnectionsTreeModel::ColTarget) {
-            text = index.data(ConnectionsTreeModel::ProcessNameRole).toString();
-        } else if (!index.data(ConnectionsTreeModel::IsProcessRole).toBool() && index.column() == ConnectionsTreeModel::ColTarget) {
-            text = index.data(ConnectionsTreeModel::CleanDestRole).toString();
-            if (text.isEmpty()) text = index.data(Qt::DisplayRole).toString();
-        } else {
-            text = index.data(Qt::DisplayRole).toString();
+        if (index.data(ConnectionsTreeModel::IsProcessRole).toBool()) {
+            if (connectionsTree->isExpanded(index)) {
+                connectionsTree->collapse(index);
+            } else {
+                connectionsTree->expand(index);
+            }
         }
-        if (text.isEmpty() || text == "-") return;
-
-        QApplication::clipboard()->setText(text);
-        const QPoint pos = connectionsTree->viewport()->mapToGlobal(connectionsTree->visualRect(index).center());
-        QToolTip::showText(pos, tr("Copied!"), this);
-        auto r = ++toolTipID;
-        QTimer::singleShot(1500, this, [=, this] {
-            if (r != toolTipID) return;
-            QToolTip::hideText();
-        });
     });
 
     connect(connectionsTree, &QTreeView::collapsed, this, [this](const QModelIndex& index) {
