@@ -78,10 +78,13 @@ void MainWindow::setupConnectionList()
         QString text;
         if (index.data(ConnectionsTreeModel::IsProcessRole).toBool() && index.column() == ConnectionsTreeModel::ColTarget) {
             text = index.data(ConnectionsTreeModel::ProcessNameRole).toString();
+        } else if (!index.data(ConnectionsTreeModel::IsProcessRole).toBool() && index.column() == ConnectionsTreeModel::ColTarget) {
+            text = index.data(ConnectionsTreeModel::CleanDestRole).toString();
+            if (text.isEmpty()) text = index.data(Qt::DisplayRole).toString();
         } else {
             text = index.data(Qt::DisplayRole).toString();
         }
-        if (text.isEmpty()) return;
+        if (text.isEmpty() || text == "-") return;
 
         QApplication::clipboard()->setText(text);
         const QPoint pos = connectionsTree->viewport()->mapToGlobal(connectionsTree->visualRect(index).center());
@@ -529,9 +532,13 @@ void MainWindow::onTreeConnectionContextMenu(const QPoint& pos)
             }
 
             menu.addSeparator();
-            auto* closeAct = menu.addAction(tr("Close connection"));
-            const QString id = meta->id;
-            connect(closeAct, &QAction::triggered, this, [this, id] { closeConnections({id}); });
+            const auto ids = connectionsTreeModel->connectionIdsAt(sourceIndex);
+            if (!ids.isEmpty()) {
+                auto* closeAct = ids.size() > 1
+                    ? menu.addAction(tr("Close all connections (%1)").arg(ids.size()))
+                    : menu.addAction(tr("Close connection"));
+                connect(closeAct, &QAction::triggered, this, [this, ids] { closeConnections(ids); });
+            }
         }
     }
 

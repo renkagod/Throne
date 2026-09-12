@@ -23,6 +23,14 @@ struct ConnectionLeafItem : public TreeItem {
     Stats::ConnectionMetadata meta;
     QString destText;
     QString protocolText;
+    QString outbound;
+    QString sourceDisplay;
+    int count = 1;
+    QStringList connectionIds;
+    long long upload = 0;
+    long long download = 0;
+    long long uploadSpeed = 0;
+    long long downloadSpeed = 0;
     int rowInParent = 0;
 };
 
@@ -34,15 +42,15 @@ struct ProcessGroupItem : public TreeItem {
     long long totalDownload = 0;
     long long totalUploadSpeed = 0;
     long long totalDownloadSpeed = 0;
+    int totalConnections = 0;
     QString commonOutbound;
     bool sameOutbound = true;
     int row = 0;
 
     QStringList connectionIds() const {
         QStringList ids;
-        ids.reserve(children.size());
         for (const auto &child : children) {
-            if (!child->meta.id.isEmpty()) ids << child->meta.id;
+            ids.append(child->connectionIds);
         }
         return ids;
     }
@@ -58,6 +66,7 @@ public:
         ConnIdsRole,
         IsProcessRole,
         ProcessNameRole,
+        CleanDestRole,
     };
 
     enum Column {
