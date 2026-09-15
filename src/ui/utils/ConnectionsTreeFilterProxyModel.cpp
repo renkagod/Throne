@@ -1,6 +1,8 @@
 #include "include/ui/utils/ConnectionsTreeFilterProxyModel.h"
 #include "include/ui/utils/ConnectionsTreeModel.h"
 
+#include <algorithm>
+
 ConnectionsTreeFilterProxyModel::ConnectionsTreeFilterProxyModel(QObject *parent)
     : QSortFilterProxyModel(parent) {
     setDynamicSortFilter(true);
@@ -11,14 +13,12 @@ ConnectionsTreeModel *ConnectionsTreeFilterProxyModel::treeModel() const {
 }
 
 bool ConnectionsTreeFilterProxyModel::hasActiveFilter() const {
-    return !m_source.isEmpty() || !m_target.isEmpty()
-           || !m_protocol.isEmpty() || !m_outbound.isEmpty();
+    return !m_source.isEmpty() || !m_target.isEmpty() || !m_protocol.isEmpty() || !m_outbound.isEmpty();
 }
 
 void ConnectionsTreeFilterProxyModel::setFilters(const QString &source, const QString &target,
                                                  const QString &protocol, const QString &outbound) {
-    if (m_source == source && m_target == target
-        && m_protocol == protocol && m_outbound == outbound) return;
+    if (m_source == source && m_target == target && m_protocol == protocol && m_outbound == outbound) return;
     m_source = source;
     m_target = target;
     m_protocol = protocol;
@@ -27,52 +27,25 @@ void ConnectionsTreeFilterProxyModel::setFilters(const QString &source, const QS
 }
 
 bool ConnectionsTreeFilterProxyModel::leafMatches(const ConnectionsTree::ProcessGroupItem *group,
-                                                  const ConnectionsTree::ConnectionLeafItem *child) const {
-    if (child == nullptr) return false;
-    const auto &meta = child->meta;
-
-    if (!m_source.isEmpty() && !meta.sourceDisplay.contains(m_source, Qt::CaseInsensitive))
-        return false;
-
-    if (!m_protocol.isEmpty() && !child->protocolText.contains(m_protocol, Qt::CaseInsensitive))
-        return false;
-
-    if (!m_outbound.isEmpty() && !meta.outbound.contains(m_outbound, Qt::CaseInsensitive))
-        return false;
-
-    if (!m_target.isEmpty()) {
-        const QString &procName = group ? group->processName : meta.process;
-        const bool procMatches = procName.contains(m_target, Qt::CaseInsensitive)
-                              || meta.process.contains(m_target, Qt::CaseInsensitive);
-        const bool destMatches = child->destText.contains(m_target, Qt::CaseInsensitive)
-                              || meta.dest.contains(m_target, Qt::CaseInsensitive)
-                              || meta.domain.contains(m_target, Qt::CaseInsensitive);
-        if (!procMatches && !destMatches) return false;
-    }
-
-    return true;
+                                                  const ConnectionsTree::ConnectionLeafItem *leaf) const {
+    if (!m_source.isEmpty() && !leaf->meta.sourceDisplay.contains(m_source, Qt::CaseInsensitive)) return false;
+    if (!m_protocol.isEmpty() && !leaf->protocolText.contains(m_protocol, Qt::CaseInsensitive)) return false;
+    if (!m_outbound.isEmpty() && !leaf->meta.outbound.contains(m_outbound, Qt::CaseInsensitive)) return false;
+    return m_target.isEmpty() || leaf->destText.contains(m_target, Qt::CaseInsensitive)
+           || ConnectionsTreeModel::displayProcessName(group->processName).contains(m_target, Qt::CaseInsensitive);
 }
 
 bool ConnectionsTreeFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const {
     if (!hasActiveFilter()) return true;
-
-    auto *model = treeModel();
+    const auto *model = treeModel();
     if (model == nullptr) return true;
 
+    const auto *group = model->groupAt(sourceParent.isValid() ? sourceParent.row() : sourceRow);
+    if (group == nullptr) return false;
     if (!sourceParent.isValid()) {
-        const auto *group = model->groupAt(sourceRow);
-        if (group == nullptr) return false;
-
-        // Group is accepted if ANY child matches all active filters
-        for (const auto &child : group->children) {
-            if (leafMatches(group, child.get())) return true;
-        }
-        return false;
-    } else {
-        const auto *group = model->groupAt(sourceParent.row());
-        if (group == nullptr || sourceRow < 0 || sourceRow >= static_cast<int>(group->children.size()))
-            return false;
-
-        return leafMatches(group, group->children[sourceRow].get());
+        return std::any_of(group->children.begin(), group->children.end(),
+                           [&](const auto &leaf) { return leafMatches(group, leaf.get()); });
     }
+    return sourceRow >= 0 && sourceRow < static_cast<int>(group->children.size())
+           && leafMatches(group, group->children[sourceRow].get());
 }

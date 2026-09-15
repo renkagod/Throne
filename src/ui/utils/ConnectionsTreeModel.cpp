@@ -1,55 +1,68 @@
 #include "include/ui/utils/ConnectionsTreeModel.h"
 #include "include/global/Utils.hpp"
 
-#include <algorithm>
-#include <QApplication>
 #include <QHash>
+
+#include <algorithm>
+
+using ConnectionsTree::ConnectionLeafItem;
+using ConnectionsTree::ProcessGroupItem;
+using ConnectionsTree::TreeItem;
+
+namespace {
+    using Groups = std::vector<std::unique_ptr<ProcessGroupItem>>;
+
+    TreeItem *itemOf(const QModelIndex &index) {
+        return static_cast<TreeItem *>(index.internalPointer());
+    }
+
+    // Same directions as the lister's comparators: numbers biggest-first and text A→Z until the header is clicked again.
+    template <typename Item, typename Key>
+    void sortItems(std::vector<std::unique_ptr<Item>> &items, bool descending, Key key) {
+        std::stable_sort(items.begin(), items.end(), [&](const std::unique_ptr<Item> &a, const std::unique_ptr<Item> &b) {
+            return descending ? key(*b) < key(*a) : key(*a) < key(*b);
+        });
+    }
+
+    template <typename GroupKey, typename LeafKey>
+    void sortTree(Groups &groups, bool descending, GroupKey groupKey, LeafKey leafKey) {
+        sortItems(groups, descending, groupKey);
+        for (auto &group : groups) sortItems(group->children, descending, leafKey);
+    }
+}
 
 ConnectionsTreeModel::ConnectionsTreeModel(QObject *parent)
     : QAbstractItemModel(parent) {}
 
+QModelIndex ConnectionsTreeModel::indexOf(TreeItem *item, int column) const {
+    return createIndex(item->row, column, item);
+}
+
 QModelIndex ConnectionsTreeModel::index(int row, int column, const QModelIndex &parent) const {
-    if (column < 0 || column >= ColumnCount) return {};
-    if (parent.isValid() && parent.column() != 0) return {};
-
+    if (row < 0 || column < 0 || column >= ColumnCount) return {};
     if (!parent.isValid()) {
-        if (row < 0 || row >= static_cast<int>(m_groups.size())) return {};
-        return createIndex(row, column, m_groups[row].get());
+        if (row >= static_cast<int>(m_groups.size())) return {};
+        return indexOf(m_groups[row].get(), column);
     }
-
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(parent.internalPointer());
-    if (!item || !item->isProcess()) return {};
-
-    auto *group = static_cast<ConnectionsTree::ProcessGroupItem *>(item);
-    if (row < 0 || row >= static_cast<int>(group->children.size())) return {};
-
-    return createIndex(row, column, group->children[row].get());
+    auto *item = itemOf(parent);
+    if (parent.column() != 0 || !item->isProcess()) return {};
+    const auto &children = static_cast<ProcessGroupItem *>(item)->children;
+    if (row >= static_cast<int>(children.size())) return {};
+    return indexOf(children[row].get(), column);
 }
 
 QModelIndex ConnectionsTreeModel::parent(const QModelIndex &child) const {
     if (!child.isValid()) return {};
-
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(child.internalPointer());
-    if (!item || item->isProcess()) return {};
-
-    auto *leaf = static_cast<ConnectionsTree::ConnectionLeafItem *>(item);
-    if (!leaf->parent) return {};
-
-    return createIndex(leaf->parent->row, 0, leaf->parent);
+    auto *item = itemOf(child);
+    if (item->isProcess()) return {};
+    return indexOf(static_cast<ConnectionLeafItem *>(item)->parent, 0);
 }
 
 int ConnectionsTreeModel::rowCount(const QModelIndex &parent) const {
-    if (parent.isValid() && parent.column() != 0) return 0;
-
-    if (!parent.isValid()) {
-        return static_cast<int>(m_groups.size());
-    }
-
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(parent.internalPointer());
-    if (!item || !item->isProcess()) return 0;
-
-    auto *group = static_cast<ConnectionsTree::ProcessGroupItem *>(item);
-    return static_cast<int>(group->children.size());
+    if (!parent.isValid()) return static_cast<int>(m_groups.size());
+    auto *item = itemOf(parent);
+    if (parent.column() != 0 || !item->isProcess()) return 0;
+    return static_cast<int>(static_cast<ProcessGroupItem *>(item)->children.size());
 }
 
 int ConnectionsTreeModel::columnCount(const QModelIndex &) const {
@@ -58,28 +71,33 @@ int ConnectionsTreeModel::columnCount(const QModelIndex &) const {
 
 Qt::ItemFlags ConnectionsTreeModel::flags(const QModelIndex &index) const {
     if (!index.isValid()) return Qt::NoItemFlags;
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    const Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    return itemOf(index)->isProcess() ? flags : flags | Qt::ItemNeverHasChildren;
+}
+
+QString ConnectionsTreeModel::displayProcessName(const QString &processName) {
+    return processName.isEmpty() ? tr("System") : processName;
 }
 
 QVariant ConnectionsTreeModel::data(const QModelIndex &index, int role) const {
     if (!index.isValid()) return {};
-
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(index.internalPointer());
-    if (!item) return {};
+    auto *item = itemOf(index);
 
     if (item->isProcess()) {
-        auto *group = static_cast<ConnectionsTree::ProcessGroupItem *>(item);
-
-        if (role == IsProcessRole) return true;
-        if (role == ProcessNameRole) return group->processName;
-        if (role == ConnIdsRole || role == ConnIdRole) return group->connectionIds();
-
-        if (role == Qt::DisplayRole) {
+        const auto *group = static_cast<const ProcessGroupItem *>(item);
+        switch (role) {
+        case IsProcessRole:
+            return true;
+        case ProcessNameRole:
+            return group->processName;
+        case ConnIdsRole:
+            return group->connectionIds();
+        case Qt::DisplayRole:
             switch (index.column()) {
             case ColTarget:
-                return QStringLiteral("%1 (%2)").arg(group->processName).arg(group->totalConnections);
+                return QStringLiteral("%1 (%2)").arg(displayProcessName(group->processName), QString::number(group->totalConnections));
             case ColSource:
-                return QStringLiteral("-");
+                return group->sameSource ? group->commonSource : QStringLiteral("-");
             case ColProtocol:
                 return QStringLiteral("-");
             case ColOutbound:
@@ -91,43 +109,35 @@ QVariant ConnectionsTreeModel::data(const QModelIndex &index, int role) const {
             default:
                 return {};
             }
+        case Qt::ToolTipRole:
+            if (index.column() != ColTarget) return {};
+            return tr("Process: %1\nActive connections: %2\nTotal traffic: %3↑ %4↓\nTotal speed: %5/s↑ %6/s↓")
+                .arg(displayProcessName(group->processName), QString::number(group->totalConnections),
+                     ReadableSize(group->totalUpload), ReadableSize(group->totalDownload),
+                     ReadableSize(group->totalUploadSpeed), ReadableSize(group->totalDownloadSpeed));
+        default:
+            return {};
         }
-
-        if (role == Qt::ToolTipRole) {
-            if (index.column() == ColTarget) {
-                return tr("Process: %1\nActive connections: %2\nTotal traffic: %3↑ %4↓\nTotal speed: %5/s↑ %6/s↓")
-                    .arg(group->processName)
-                    .arg(group->totalConnections)
-                    .arg(ReadableSize(group->totalUpload))
-                    .arg(ReadableSize(group->totalDownload))
-                    .arg(ReadableSize(group->totalUploadSpeed))
-                    .arg(ReadableSize(group->totalDownloadSpeed));
-            }
-        }
-
-        return {};
     }
 
-    // Leaf connection
-    auto *leaf = static_cast<ConnectionsTree::ConnectionLeafItem *>(item);
-    const auto &c = leaf->meta;
-
-    if (role == IsProcessRole) return false;
-    if (role == ProcessNameRole) return leaf->parent ? leaf->parent->processName : c.process;
-    if (role == CleanDestRole) return leaf->destText;
-    if (role == ConnIdRole) return leaf->connectionIds.isEmpty() ? QString() : leaf->connectionIds.first();
-    if (role == ConnIdsRole) return leaf->connectionIds;
-
-    if (role == Qt::DisplayRole) {
+    const auto *leaf = static_cast<const ConnectionLeafItem *>(item);
+    switch (role) {
+    case IsProcessRole:
+        return false;
+    case ProcessNameRole:
+        return leaf->parent->processName;
+    case ConnIdsRole:
+        return leaf->connectionIds;
+    case Qt::DisplayRole:
         switch (index.column()) {
         case ColTarget:
-            return (leaf->count > 1) ? QStringLiteral("%1 (%2)").arg(leaf->destText).arg(leaf->count) : leaf->destText;
+            return leaf->count > 1 ? QStringLiteral("%1 (%2)").arg(leaf->destText, QString::number(leaf->count)) : leaf->destText;
         case ColSource:
-            return (leaf->count > 1) ? QStringLiteral("-") : leaf->sourceDisplay;
+            return leaf->meta.sourceDisplay;
         case ColProtocol:
             return leaf->protocolText;
         case ColOutbound:
-            return leaf->outbound;
+            return leaf->meta.outbound;
         case ColTraffic:
             return ReadableSize(leaf->upload) + "↑ " + ReadableSize(leaf->download) + "↓";
         case ColSpeed:
@@ -135,28 +145,21 @@ QVariant ConnectionsTreeModel::data(const QModelIndex &index, int role) const {
         default:
             return {};
         }
-    }
-
-    if (role == Qt::ToolTipRole) {
-        if (index.column() == ColTarget) {
-            if (leaf->count > 1) {
-                return tr("Destination: %1\nConnections: %2\nProcess: %3\nProtocol: %4\nOutbound: %5\nTotal traffic: %6↑ %7↓\nTotal speed: %8/s↑ %9/s↓")
-                    .arg(leaf->destText)
-                    .arg(leaf->count)
-                    .arg(c.process.isEmpty() ? tr("System") : c.process)
-                    .arg(leaf->protocolText)
-                    .arg(leaf->outbound)
-                    .arg(ReadableSize(leaf->upload))
-                    .arg(ReadableSize(leaf->download))
-                    .arg(ReadableSize(leaf->uploadSpeed))
-                    .arg(ReadableSize(leaf->downloadSpeed));
-            }
-            return tr("Destination: %1\nProcess: %2\nProtocol: %3\nOutbound: %4")
-                .arg(leaf->destText, c.process.isEmpty() ? tr("System") : c.process, leaf->protocolText, leaf->outbound);
+    case Qt::ToolTipRole: {
+        if (index.column() != ColTarget) return {};
+        const QString process = displayProcessName(leaf->parent->processName);
+        if (leaf->count > 1) {
+            return tr("Destination: %1\nConnections: %2\nProcess: %3\nProtocol: %4\nOutbound: %5\nTotal traffic: %6↑ %7↓\nTotal speed: %8/s↑ %9/s↓")
+                .arg(leaf->destText, QString::number(leaf->count), process, leaf->protocolText, leaf->meta.outbound,
+                     ReadableSize(leaf->upload), ReadableSize(leaf->download),
+                     ReadableSize(leaf->uploadSpeed), ReadableSize(leaf->downloadSpeed));
         }
+        return tr("Destination: %1\nProcess: %2\nProtocol: %3\nOutbound: %4")
+            .arg(leaf->destText, process, leaf->protocolText, leaf->meta.outbound);
     }
-
-    return {};
+    default:
+        return {};
+    }
 }
 
 QVariant ConnectionsTreeModel::headerData(int section, Qt::Orientation orientation, int role) const {
@@ -189,40 +192,23 @@ QVariant ConnectionsTreeModel::headerData(int section, Qt::Orientation orientati
     return {};
 }
 
-void ConnectionsTreeModel::setConnections(const QList<Stats::ConnectionMetadata> &connections) {
-    beginResetModel();
-    m_groups.clear();
-
-    QHash<QString, int> groupMap;
-    std::vector<QHash<QString, int>> groupLeafMaps;
+void ConnectionsTreeModel::setConnections(const QList<Stats::ConnectionMetadata> &connections,
+                                          Stats::ConnectionSort sort, bool ascending) {
+    Groups groups;
+    QHash<QString, ProcessGroupItem *> groupByName;
+    QHash<QString, ConnectionLeafItem *> leafByKey;
 
     for (const auto &c : connections) {
-        QString proc = c.process.trimmed();
-        if (proc.isEmpty()) {
-            proc = tr("System");
+        const QString process = c.process.trimmed();
+        ProcessGroupItem *&group = groupByName[process];
+        if (group == nullptr) {
+            group = groups.emplace_back(std::make_unique<ProcessGroupItem>()).get();
+            group->processName = process;
+            group->commonOutbound = c.outbound;
+            group->commonSource = c.sourceDisplay;
         }
-
-        auto it = groupMap.find(proc);
-        ConnectionsTree::ProcessGroupItem *group = nullptr;
-        int groupRow = -1;
-        if (it == groupMap.end()) {
-            auto newGroup = std::make_unique<ConnectionsTree::ProcessGroupItem>();
-            newGroup->processName = proc;
-            newGroup->row = static_cast<int>(m_groups.size());
-            newGroup->commonOutbound = c.outbound;
-            group = newGroup.get();
-            groupRow = newGroup->row;
-            groupMap.insert(proc, groupRow);
-            m_groups.push_back(std::move(newGroup));
-            groupLeafMaps.emplace_back();
-        } else {
-            groupRow = it.value();
-            group = m_groups[groupRow].get();
-            if (group->sameOutbound && group->commonOutbound != c.outbound) {
-                group->sameOutbound = false;
-            }
-        }
-
+        group->sameOutbound = group->sameOutbound && group->commonOutbound == c.outbound;
+        group->sameSource = group->sameSource && group->commonSource == c.sourceDisplay;
         group->totalConnections++;
         group->totalUpload += c.upload;
         group->totalDownload += c.download;
@@ -230,180 +216,110 @@ void ConnectionsTreeModel::setConnections(const QList<Stats::ConnectionMetadata>
         group->totalDownloadSpeed += c.downloadSpeed;
 
         const QString dest = DisplayDest(c.dest, c.domain);
-        const QString proto = c.protocol.isEmpty() ? c.network : c.network + " (" + c.protocol + ")";
-        const QString leafKey = dest + "\t" + proto + "\t" + c.outbound;
-
-        auto &leafMap = groupLeafMaps[groupRow];
-        auto leafIt = leafMap.find(leafKey);
-        if (leafIt == leafMap.end()) {
-            auto leaf = std::make_unique<ConnectionsTree::ConnectionLeafItem>();
+        const QString protocol = c.protocol.isEmpty() ? c.network : c.network + " (" + c.protocol + ")";
+        const QString key = dest + "\t" + protocol + "\t" + c.outbound + "\t" + c.sourceDisplay;
+        ConnectionLeafItem *&leaf = leafByKey[process + "\n" + key];
+        if (leaf == nullptr) {
+            leaf = group->children.emplace_back(std::make_unique<ConnectionLeafItem>()).get();
             leaf->parent = group;
-            leaf->rowInParent = static_cast<int>(group->children.size());
             leaf->meta = c;
+            leaf->key = key;
             leaf->destText = dest;
-            leaf->protocolText = proto;
-            leaf->outbound = c.outbound;
-            leaf->sourceDisplay = c.sourceDisplay;
-            leaf->count = 1;
-            if (!c.id.isEmpty()) leaf->connectionIds.append(c.id);
-            leaf->upload = c.upload;
-            leaf->download = c.download;
-            leaf->uploadSpeed = c.uploadSpeed;
-            leaf->downloadSpeed = c.downloadSpeed;
+            leaf->protocolText = protocol;
+        }
+        leaf->count++;
+        if (!c.id.isEmpty()) leaf->connectionIds.append(c.id);
+        leaf->upload += c.upload;
+        leaf->download += c.download;
+        leaf->uploadSpeed += c.uploadSpeed;
+        leaf->downloadSpeed += c.downloadSpeed;
+    }
 
-            leafMap.insert(leafKey, static_cast<int>(group->children.size()));
-            group->children.push_back(std::move(leaf));
+    // Rows arrive in the lister's order, which already implements Default, Source, Protocol and Outbound.
+    switch (sort) {
+    case Stats::ByTraffic:
+        sortTree(groups, !ascending, [](const ProcessGroupItem &g) { return g.totalUpload + g.totalDownload; },
+                 [](const ConnectionLeafItem &l) { return l.upload + l.download; });
+        break;
+    case Stats::ByDownload:
+        sortTree(groups, !ascending, [](const ProcessGroupItem &g) { return g.totalDownload; },
+                 [](const ConnectionLeafItem &l) { return l.download; });
+        break;
+    case Stats::ByUpload:
+        sortTree(groups, !ascending, [](const ProcessGroupItem &g) { return g.totalUpload; },
+                 [](const ConnectionLeafItem &l) { return l.upload; });
+        break;
+    case Stats::BySpeed:
+        sortTree(groups, !ascending, [](const ProcessGroupItem &g) { return g.totalUploadSpeed + g.totalDownloadSpeed; },
+                 [](const ConnectionLeafItem &l) { return l.uploadSpeed + l.downloadSpeed; });
+        break;
+    case Stats::ByDownloadSpeed:
+        sortTree(groups, !ascending, [](const ProcessGroupItem &g) { return g.totalDownloadSpeed; },
+                 [](const ConnectionLeafItem &l) { return l.downloadSpeed; });
+        break;
+    case Stats::ByUploadSpeed:
+        sortTree(groups, !ascending, [](const ProcessGroupItem &g) { return g.totalUploadSpeed; },
+                 [](const ConnectionLeafItem &l) { return l.uploadSpeed; });
+        break;
+    case Stats::ByProcess:
+        sortTree(groups, ascending, [](const ProcessGroupItem &g) -> const QString & { return g.processName; },
+                 [](const ConnectionLeafItem &l) -> const QString & { return l.destText; });
+        break;
+    default:
+        break;
+    }
+
+    for (size_t g = 0; g < groups.size(); ++g) {
+        groups[g]->row = static_cast<int>(g);
+        auto &children = groups[g]->children;
+        for (size_t l = 0; l < children.size(); ++l) children[l]->row = static_cast<int>(l);
+    }
+
+    // Moving persistent indexes by key instead of resetting keeps selection, expansion and a half-finished click.
+    emit layoutAboutToBeChanged();
+    const QModelIndexList from = persistentIndexList();
+    QModelIndexList to;
+    to.reserve(from.size());
+    for (const QModelIndex &index : from) {
+        const auto *item = itemOf(index);
+        TreeItem *moved = nullptr;
+        if (item->isProcess()) {
+            moved = groupByName.value(static_cast<const ProcessGroupItem *>(item)->processName);
         } else {
-            auto *existingLeaf = group->children[leafIt.value()].get();
-            existingLeaf->count++;
-            if (!c.id.isEmpty()) existingLeaf->connectionIds.append(c.id);
-            existingLeaf->upload += c.upload;
-            existingLeaf->download += c.download;
-            existingLeaf->uploadSpeed += c.uploadSpeed;
-            existingLeaf->downloadSpeed += c.downloadSpeed;
-            if (existingLeaf->sourceDisplay != c.sourceDisplay) {
-                existingLeaf->sourceDisplay = QStringLiteral("-");
-            }
+            const auto *leaf = static_cast<const ConnectionLeafItem *>(item);
+            moved = leafByKey.value(leaf->parent->processName + "\n" + leaf->key);
         }
+        to.append(moved != nullptr ? indexOf(moved, index.column()) : QModelIndex());
     }
-
-    if (Stats::connection_lister != nullptr) {
-        const auto sortMode = Stats::connection_lister->getSort();
-        const bool asc = Stats::connection_lister->isSortAscending();
-
-        auto compareGroups = [sortMode, asc](const std::unique_ptr<ConnectionsTree::ProcessGroupItem> &a,
-                                             const std::unique_ptr<ConnectionsTree::ProcessGroupItem> &b) -> bool {
-            switch (sortMode) {
-            case Stats::ByTraffic: {
-                const auto ta = a->totalUpload + a->totalDownload;
-                const auto tb = b->totalUpload + b->totalDownload;
-                if (ta == tb) return a->processName < b->processName;
-                return asc ? (ta < tb) : (ta > tb);
-            }
-            case Stats::ByDownload: {
-                if (a->totalDownload == b->totalDownload) return a->processName < b->processName;
-                return asc ? (a->totalDownload < b->totalDownload) : (a->totalDownload > b->totalDownload);
-            }
-            case Stats::ByUpload: {
-                if (a->totalUpload == b->totalUpload) return a->processName < b->processName;
-                return asc ? (a->totalUpload < b->totalUpload) : (a->totalUpload > b->totalUpload);
-            }
-            case Stats::BySpeed: {
-                const auto sa = a->totalUploadSpeed + a->totalDownloadSpeed;
-                const auto sb = b->totalUploadSpeed + b->totalDownloadSpeed;
-                if (sa == sb) return a->processName < b->processName;
-                return asc ? (sa < sb) : (sa > sb);
-            }
-            case Stats::ByDownloadSpeed: {
-                if (a->totalDownloadSpeed == b->totalDownloadSpeed) return a->processName < b->processName;
-                return asc ? (a->totalDownloadSpeed < b->totalDownloadSpeed) : (a->totalDownloadSpeed > b->totalDownloadSpeed);
-            }
-            case Stats::ByUploadSpeed: {
-                if (a->totalUploadSpeed == b->totalUploadSpeed) return a->processName < b->processName;
-                return asc ? (a->totalUploadSpeed < b->totalUploadSpeed) : (a->totalUploadSpeed > b->totalUploadSpeed);
-            }
-            case Stats::ByProcess: {
-                if (a->processName == b->processName) return false;
-                return asc ? (a->processName > b->processName) : (a->processName < b->processName);
-            }
-            default:
-                return false;
-            }
-        };
-
-        if (sortMode != Stats::Default) {
-            std::stable_sort(m_groups.begin(), m_groups.end(), compareGroups);
-        }
-
-        for (auto &group : m_groups) {
-            std::stable_sort(group->children.begin(), group->children.end(),
-                [sortMode, asc](const std::unique_ptr<ConnectionsTree::ConnectionLeafItem> &a,
-                                const std::unique_ptr<ConnectionsTree::ConnectionLeafItem> &b) -> bool {
-                    switch (sortMode) {
-                    case Stats::ByTraffic: {
-                        const auto ta = a->upload + a->download;
-                        const auto tb = b->upload + b->download;
-                        if (ta == tb) return a->destText < b->destText;
-                        return asc ? (ta < tb) : (ta > tb);
-                    }
-                    case Stats::ByDownload: {
-                        if (a->download == b->download) return a->destText < b->destText;
-                        return asc ? (a->download < b->download) : (a->download > b->download);
-                    }
-                    case Stats::ByUpload: {
-                        if (a->upload == b->upload) return a->destText < b->destText;
-                        return asc ? (a->upload < b->upload) : (a->upload > b->upload);
-                    }
-                    case Stats::BySpeed: {
-                        const auto sa = a->uploadSpeed + a->downloadSpeed;
-                        const auto sb = b->uploadSpeed + b->downloadSpeed;
-                        if (sa == sb) return a->destText < b->destText;
-                        return asc ? (sa < sb) : (sa > sb);
-                    }
-                    case Stats::ByDownloadSpeed: {
-                        if (a->downloadSpeed == b->downloadSpeed) return a->destText < b->destText;
-                        return asc ? (a->downloadSpeed < b->downloadSpeed) : (a->downloadSpeed > b->downloadSpeed);
-                    }
-                    case Stats::ByUploadSpeed: {
-                        if (a->uploadSpeed == b->uploadSpeed) return a->destText < b->destText;
-                        return asc ? (a->uploadSpeed < b->uploadSpeed) : (a->uploadSpeed > b->uploadSpeed);
-                    }
-                    case Stats::ByProcess:
-                    default: {
-                        if (a->destText == b->destText) return false;
-                        return asc ? (a->destText < b->destText) : (a->destText > b->destText);
-                    }
-                    }
-                });
-            for (size_t c = 0; c < group->children.size(); ++c) {
-                group->children[c]->rowInParent = static_cast<int>(c);
-            }
-        }
-    }
-
-    for (size_t i = 0; i < m_groups.size(); ++i) {
-        m_groups[i]->row = static_cast<int>(i);
-    }
-
-    endResetModel();
+    m_groups.swap(groups);
+    changePersistentIndexList(from, to);
+    emit layoutChanged();
 }
 
 bool ConnectionsTreeModel::isProcessIndex(const QModelIndex &index) const {
-    if (!index.isValid()) return false;
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(index.internalPointer());
-    return item && item->isProcess();
+    return index.isValid() && itemOf(index)->isProcess();
 }
 
 QString ConnectionsTreeModel::processNameAt(const QModelIndex &index) const {
     if (!index.isValid()) return {};
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(index.internalPointer());
-    if (!item) return {};
-    if (item->isProcess()) return static_cast<ConnectionsTree::ProcessGroupItem *>(item)->processName;
-    auto *leaf = static_cast<ConnectionsTree::ConnectionLeafItem *>(item);
-    return leaf->parent ? leaf->parent->processName : leaf->meta.process;
+    auto *item = itemOf(index);
+    if (item->isProcess()) return static_cast<ProcessGroupItem *>(item)->processName;
+    return static_cast<ConnectionLeafItem *>(item)->parent->processName;
 }
 
 const Stats::ConnectionMetadata *ConnectionsTreeModel::metaAt(const QModelIndex &index) const {
-    if (!index.isValid()) return nullptr;
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(index.internalPointer());
-    if (!item || item->isProcess()) return nullptr;
-    return &static_cast<ConnectionsTree::ConnectionLeafItem *>(item)->meta;
+    if (!index.isValid() || itemOf(index)->isProcess()) return nullptr;
+    return &static_cast<ConnectionLeafItem *>(itemOf(index))->meta;
 }
 
 QStringList ConnectionsTreeModel::connectionIdsAt(const QModelIndex &index) const {
     if (!index.isValid()) return {};
-    auto *item = static_cast<ConnectionsTree::TreeItem *>(index.internalPointer());
-    if (!item) return {};
-    if (item->isProcess()) return static_cast<ConnectionsTree::ProcessGroupItem *>(item)->connectionIds();
-    auto *leaf = static_cast<ConnectionsTree::ConnectionLeafItem *>(item);
-    return leaf->connectionIds;
+    auto *item = itemOf(index);
+    if (item->isProcess()) return static_cast<ProcessGroupItem *>(item)->connectionIds();
+    return static_cast<ConnectionLeafItem *>(item)->connectionIds;
 }
 
-const ConnectionsTree::ProcessGroupItem *ConnectionsTreeModel::groupAt(int row) const {
-    if (row < 0 || row >= m_groups.size()) return nullptr;
+const ProcessGroupItem *ConnectionsTreeModel::groupAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(m_groups.size())) return nullptr;
     return m_groups[row].get();
-}
-
-int ConnectionsTreeModel::groupCount() const {
-    return static_cast<int>(m_groups.size());
 }

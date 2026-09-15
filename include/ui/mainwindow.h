@@ -275,13 +275,11 @@ private:
     ExitReason exit_reason = ExitReason::None;
     QMutex mu_download_update;
     QMutex mu_download_dashboard;
-    class ConnectionsTreeModel *connectionsTreeModel = nullptr;
-    class ConnectionsTreeFilterProxyModel *connectionsTreeFilterModel = nullptr;
-    class ConnectionsTreeFilterHeader *connectionsTreeFilterHeader = nullptr;
-    class QTreeView *connectionsTree = nullptr;
+    class ConnectionsTreeModel *connectionsModel = nullptr;
+    class ConnectionsTreeFilterProxyModel *connectionsFilterModel = nullptr;
+    class ConnectionsFilterHeader *connectionFilterHeader = nullptr;
     QSet<QString> m_collapsedProcesses;
     QTimer *connectionFilterDebounce = nullptr;
-    QToolButton *connectionFilterButton = nullptr;
     QToolButton *connectionCloseAllButton = nullptr;
     QIcon connectionCloseIcon;
     int toolTipID;
@@ -498,7 +496,7 @@ private:
 
     void setupConnectionSortMenu();
 
-    void onTreeConnectionContextMenu(const QPoint &pos);
+    void onConnectionContextMenu(const QPoint &pos);
 
     QString routeRuleAppendBlocker() const;
 
@@ -513,6 +511,10 @@ private:
     void applyConnectionFilters();
 
     void syncConnectionSourceColumn();
+
+    void syncConnectionExpansion();
+
+    void setConnectionGroupsExpanded(bool expanded);
 
     void closeConnections(const QStringList &ids);
 

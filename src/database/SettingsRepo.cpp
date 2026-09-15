@@ -294,7 +294,7 @@ namespace Configs {
             }
         }
         // Nothing writes these back, so drop them or they keep overriding the migrated flags on every load.
-        db.exec("DELETE FROM settings WHERE key IN ('direct_dns_strategy', 'remote_dns_strategy', 'connection_tree_view')");
+        db.exec("DELETE FROM settings WHERE key IN ('direct_dns_strategy', 'remote_dns_strategy')");
     }
 
     void SettingsRepo::saveAllSettings() const {

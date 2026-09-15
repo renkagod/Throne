@@ -9,7 +9,7 @@
 
 #include "include/ui/utils/ConnectionsTreeModel.h"
 
-class ConnectionsTreeFilterHeader : public QHeaderView {
+class ConnectionsFilterHeader : public QHeaderView {
     Q_OBJECT
 public:
     struct Filters {
@@ -19,7 +19,7 @@ public:
         QString outbound;
     };
 
-    explicit ConnectionsTreeFilterHeader(QWidget *parent = nullptr)
+    explicit ConnectionsFilterHeader(QWidget *parent = nullptr)
         : QHeaderView(Qt::Horizontal, parent) {
         setSectionsClickable(true);
         setDefaultAlignment(Qt::AlignHCenter | Qt::AlignTop);
@@ -29,7 +29,7 @@ public:
         protocol_filter = makeEdit();
         outbound_filter = makeEdit();
 
-        connect(this, &QHeaderView::sectionResized, this, &ConnectionsTreeFilterHeader::adjustPositions);
+        connect(this, &QHeaderView::sectionResized, this, &ConnectionsFilterHeader::adjustPositions);
 
         setFiltersVisible(false);
     }
@@ -40,17 +40,9 @@ public:
         if (QLineEdit *edit = editForColumn(column)) edit->clear();
     }
 
-    void setFilterText(int column, const QString &text) {
-        if (QLineEdit *edit = editForColumn(column)) {
-            if (edit->text() != text) edit->setText(text);
-        }
-    }
-
     Filters filters() const {
-        return {textFor(ConnectionsTreeModel::ColSource),
-                textFor(ConnectionsTreeModel::ColTarget),
-                textFor(ConnectionsTreeModel::ColProtocol),
-                textFor(ConnectionsTreeModel::ColOutbound)};
+        return {textFor(ConnectionsTreeModel::ColSource), textFor(ConnectionsTreeModel::ColTarget),
+                textFor(ConnectionsTreeModel::ColProtocol), textFor(ConnectionsTreeModel::ColOutbound)};
     }
 
     QSize sizeHint() const override {
@@ -62,6 +54,7 @@ public:
     }
 
 protected:
+    // Protocol/Outbound are ResizeToContents, so without a floor their fields shrink to the header label's width.
     QSize sectionSizeFromContents(int logicalIndex) const override {
         QSize s = QHeaderView::sectionSizeFromContents(logicalIndex);
         if (m_filtersVisible && editForColumn(logicalIndex) != nullptr) {
@@ -78,6 +71,7 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override {
         if (!qobject_cast<QLineEdit*>(obj)) return QHeaderView::eventFilter(obj, event);
 
+        // Window shortcuts resolve before the key reaches the field, so bare Return/Del would fire menu actions.
         if (event->type() == QEvent::ShortcutOverride) {
             if (!isTextEditingKey(static_cast<QKeyEvent*>(event))) {
                 return QHeaderView::eventFilter(obj, event);
@@ -112,6 +106,7 @@ public slots:
         emit geometriesChanged();
         adjustPositions();
 
+        // Tab/Backtab/Shortcut focus reasons make QLineEdit select all; OtherFocusReason does not.
         if (visible) {
             target_filter->setFocus(Qt::OtherFocusReason);
         }
@@ -131,7 +126,6 @@ public slots:
             edit->show();
             edit->setGeometry(sectionViewportPosition(section) + 2, topPos, sectionSize(section) - 4, editHeight);
         };
-
         place(target_filter, ConnectionsTreeModel::ColTarget);
         place(source_filter, ConnectionsTreeModel::ColSource);
         place(protocol_filter, ConnectionsTreeModel::ColProtocol);
@@ -140,6 +134,7 @@ public slots:
 
 signals:
     void filtersChanged();
+    // The checkable toolbutton owns the visible state, so it has to be the one to untoggle us.
     void closeRequested();
 
 private:
@@ -162,6 +157,7 @@ private:
         }
     }
 
+    // A hidden column must report no filter, or its stale text would keep filtering the table invisibly.
     QString textFor(int column) const {
         QLineEdit *edit = editForColumn(column);
         if (edit == nullptr || isSectionHidden(column)) return {};
@@ -186,9 +182,9 @@ private:
         return false;
     }
 
-    QLineEdit *target_filter = nullptr;
-    QLineEdit *source_filter = nullptr;
-    QLineEdit *protocol_filter = nullptr;
-    QLineEdit *outbound_filter = nullptr;
+    QLineEdit *target_filter;
+    QLineEdit *source_filter;
+    QLineEdit *protocol_filter;
+    QLineEdit *outbound_filter;
     bool m_filtersVisible = false;
 };
