@@ -27,6 +27,18 @@
 
 namespace
 {
+    // tile.openstreetmap.org -> ["tile.openstreetmap.org", "openstreetmap.org"].
+    // Stops at two labels: a rule on a bare TLD is never what the user meant.
+    QStringList DomainLevels(const QString& host)
+    {
+        const auto labels = host.split('.', Qt::SkipEmptyParts);
+        QStringList levels;
+        for (qsizetype i = 0; i + 2 <= labels.size(); ++i)
+            levels << QStringList(labels.mid(i)).join('.');
+        if (levels.isEmpty()) levels << host; // single-label hosts such as "localhost"
+        return levels;
+    }
+
     QIcon RecolorIcon(const QString& path, const QColor& color)
     {
         QPixmap pixmap(path);
@@ -496,9 +508,17 @@ void MainWindow::onConnectionContextMenu(const QPoint& pos)
         const QString domain = meta->domain.trimmed();
         const QString host = domain.isEmpty() ? Stats::EndpointHost(meta->dest.trimmed()) : domain;
         const bool isDomain = QHostAddress(host).isNull();
-        const QString addressRule = isDomain ? ("suffix:" + host) : ("ip:" + host);
 
-        if (!host.isEmpty()) addRouteSubmenu(tr("Append \"%1\" to").arg(host), addressRule);
+        if (!host.isEmpty())
+        {
+            // Every level is a domain_suffix rule, so each one also covers whatever sits in front of it:
+            // the leading "*." in the label says so, but never reaches the rule itself.
+            if (isDomain)
+                for (const auto& level : DomainLevels(host))
+                    addRouteSubmenu(tr("Append \"*.%1\" to").arg(level), "suffix:" + level);
+            else
+                addRouteSubmenu(tr("Append \"%1\" to").arg(host), "ip:" + host);
+        }
         if (!process.isEmpty()) addRouteSubmenu(tr("Append process \"%1\" to").arg(process), "processName:" + process);
 
         menu.addSeparator();
