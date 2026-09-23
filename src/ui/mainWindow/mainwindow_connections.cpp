@@ -580,6 +580,13 @@ void MainWindow::onConnectionContextMenu(const QPoint& pos)
             const auto levels = DomainLevels(host.toLower());
             for (qsizetype i = 0; i < levels.size(); ++i)
                 targets << RouteTarget{ "*." + levels[i], "suffix:" + levels[i], i > 0 && i == levels.size() - 1 };
+            // The name in front of the TLD as a keyword rule, which also catches the service's other domains (githubusercontent.com).
+            // Names under 4 letters are left out: co in bbc.co.uk or vk would catch far too much.
+            if (levels.size() > 1)
+            {
+                const QString name = levels[levels.size() - 2].section('.', 0, 0);
+                if (name.size() >= 4) targets.insert(targets.size() - 1, RouteTarget{ "*" + name + "*", "keyword:" + name });
+            }
         }
         else if (!host.isEmpty())
         {
