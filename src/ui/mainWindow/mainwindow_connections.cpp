@@ -576,7 +576,8 @@ void MainWindow::onConnectionContextMenu(const QPoint& pos)
             // Every level is a domain_suffix rule and so also covers whatever sits in front of it:
             // the leading "*." in the label says so, but never reaches the rule itself.
             // The bare TLD sits apart, since it reroutes a whole zone.
-            const auto levels = DomainLevels(host);
+            // Lowercase, because sing-box lowercases the host it matches but takes rule values as written.
+            const auto levels = DomainLevels(host.toLower());
             for (qsizetype i = 0; i < levels.size(); ++i)
                 targets << RouteTarget{ "*." + levels[i], "suffix:" + levels[i], i > 0 && i == levels.size() - 1 };
         }
